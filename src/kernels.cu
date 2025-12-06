@@ -16,11 +16,11 @@ __global__ void baseline(float *d_input, float *d_output, int N) {
 __global__ void reduce(float *d_input, float *d_output, int N) {
   __shared__ float tmp[threadsPerBlock / warpSize];
 
-  int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= N)
-    return;
-
-  float val = d_input[i];
+  float val = 0;
+  for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < N;
+       idx += gridDim.x * blockDim.x) {
+    val += d_input[idx];
+  }
 
   for (int offset = 16; offset > 0; offset /= 2)
     val += __shfl_down_sync(FULL_MASK, val, offset);

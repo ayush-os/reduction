@@ -59,20 +59,8 @@ int main() {
   std::cout << "Warming up the GPU and Caches (" << WARMUP_RUNS << " runs)..."
             << std::endl;
   for (int i = 0; i < WARMUP_RUNS; ++i) {
-    int pass = 0;
-    while (N > threadsPerBlock) {
-      int blocks = (N + threadsPerBlock - 1) / threadsPerBlock;
-      reduce<<<blocks, threadsPerBlock>>>(in, out, N);
-      N = blocks;
-
-      in = (pass % 2 == 0) ? d_temp1 : d_temp2;
-      out = (pass % 2 == 0) ? d_temp2 : d_temp1;
-      pass++;
-    }
-
-    reduce<<<1, threadsPerBlock>>>(in, d_output, N);
-
-    N = 1 << SHIFT;
+    reduce<<<1024, 256>>>(d_input, d_temp, N);
+    reduce<<<1, 256>>>(d_temp, d_output, 1024);
   }
   checkCudaError(cudaDeviceSynchronize(), "warm-up device sync");
   checkCudaError(cudaGetLastError(), "warm-up kernel launch");
@@ -85,20 +73,8 @@ int main() {
     checkCudaError(cudaMemset(d_output, 0, sizeof(float)), "d_output reset");
     checkCudaError(cudaEventRecord(start), "cudaEventRecord start");
 
-    int pass = 0;
-    while (N > threadsPerBlock) {
-      int blocks = (N + threadsPerBlock - 1) / threadsPerBlock;
-      reduce<<<blocks, threadsPerBlock>>>(in, out, N);
-      N = blocks;
-
-      in = (pass % 2 == 0) ? d_temp1 : d_temp2;
-      out = (pass % 2 == 0) ? d_temp2 : d_temp1;
-      pass++;
-    }
-
-    reduce<<<1, threadsPerBlock>>>(in, d_output, N);
-
-    N = 1 << SHIFT;
+    reduce<<<1024, 256>>>(d_input, d_temp, N);
+    reduce<<<1, 256>>>(d_temp, d_output, 1024);
 
     checkCudaError(cudaEventRecord(stop), "cudaEventRecord stop");
     checkCudaError(cudaEventSynchronize(stop), "cudaEventSynchronize stop");
