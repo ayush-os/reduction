@@ -91,8 +91,8 @@ int main() {
   std::cout << "\n--- Timing Results ---" << std::endl;
   std::cout << "Total execution time for " << TIMING_RUNS
             << " stable runs: " << total_milliseconds << " ms" << std::endl;
-  std::cout << "**Average kernel execution time:** " << average_milliseconds
-            << " ms" << std::endl;
+  std::cout << "**Average kernel execution time:** " << average_milliseconds * 1000
+            << " us" << std::endl;
 
   if (std::abs(h_output_val - expected_value) < 1e-5 * expected_value) {
     std::cout << "\nVerification Check: **PASSED**" << std::endl;
