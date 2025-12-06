@@ -1,5 +1,7 @@
 #include <math.h>
 
+#define FULL_MASK 0xffffffff
+const int warpSize = 32;
 const int threadsPerBlock = 256;
 const int numBlocks = 65536;
 
@@ -12,23 +14,28 @@ __global__ void baseline(float *d_input, float *d_output, int N) {
 }
 
 __global__ void smem(float *d_input, float *d_output, int N) {
-  __shared__ int tmp[threadsPerBlock];
+  __shared__ int tmp[threadsPerBlock / warpSize];
 
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= N)
     return;
 
-  tmp[threadIdx.x] = d_input[i];
+  int val = d_input[i];
 
   __syncthreads();
 
-  for (int stride = threadsPerBlock / 2; stride > 0; stride /= 2) {
-    if (threadIdx.x < stride) {
-      tmp[threadIdx.x] += tmp[threadIdx.x + stride];
-    }
-    __syncthreads();
-  }
+  for (int offset = 16; offset > 0; offset /= 2)
+    val += __shfl_down_sync(FULL_MASK, val, offset);
 
-  if (threadIdx.x == 0)
-    atomicAdd(d_output, tmp[threadIdx.x]);
+  if (threadIdx.x % warpSize == 0)
+    tmp[threadIdx.x / warpSize] = val;
+
+  __syncthreads();
+
+  if (threadIdx.x == 0) {
+    int sum = 0;
+    for (int i = 0; i < (threadsPerBlock / warpSize); i++)
+      sum += tmp[i];
+    atomicAdd(d_output, sum);
+  }
 }
