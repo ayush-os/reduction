@@ -13,7 +13,6 @@ __global__ void baseline(float *d_input, float *d_output, int N) {
 
 __global__ void smem(float *d_input, float *d_output, int N) {
   __shared__ int tmp[threadsPerBlock];
-  __shared__ int tmp2[threadsPerBlock];
 
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= N)
@@ -23,52 +22,13 @@ __global__ void smem(float *d_input, float *d_output, int N) {
 
   __syncthreads();
 
-  if (threadIdx.x >= 128)
-    return;
+  for (int stride = threadsPerBlock / 2; stride > 0; stride /= 2) {
+    if (threadIdx.x < stride) {
+      tmp[threadIdx.x] += tmp[threadIdx.x + stride];
+    }
+    __syncthreads();
+  }
 
-  tmp2[threadIdx.x] = tmp[threadIdx.x * 2] + tmp[(threadIdx.x * 2) + 1];
-  __syncthreads();
-
-  if (threadIdx.x >= 64)
-    return;
-
-  tmp[threadIdx.x] = tmp2[threadIdx.x * 2] + tmp2[(threadIdx.x * 2) + 1];
-  __syncthreads();
-
-  if (threadIdx.x >= 32)
-    return;
-
-  tmp2[threadIdx.x] = tmp[threadIdx.x * 2] + tmp[(threadIdx.x * 2) + 1];
-  __syncthreads();
-
-  if (threadIdx.x >= 16)
-    return;
-
-  tmp[threadIdx.x] = tmp2[threadIdx.x * 2] + tmp2[(threadIdx.x * 2) + 1];
-  __syncthreads();
-
-  if (threadIdx.x >= 8)
-    return;
-
-  tmp2[threadIdx.x] = tmp[threadIdx.x * 2] + tmp[(threadIdx.x * 2) + 1];
-  __syncthreads();
-
-  if (threadIdx.x >= 4)
-    return;
-
-  tmp[threadIdx.x] = tmp2[threadIdx.x * 2] + tmp2[(threadIdx.x * 2) + 1];
-  __syncthreads();
-
-  if (threadIdx.x >= 2)
-    return;
-
-  tmp2[threadIdx.x] = tmp[threadIdx.x * 2] + tmp[(threadIdx.x * 2) + 1];
-  __syncthreads();
-
-  if (threadIdx.x >= 1)
-    return;
-
-  tmp[threadIdx.x] = tmp2[threadIdx.x * 2] + tmp2[(threadIdx.x * 2) + 1];
-
-  atomicAdd(d_output, tmp[threadIdx.x]);
+  if (threadIdx.x == 0)
+    atomicAdd(d_output, tmp[threadIdx.x]);
 }
