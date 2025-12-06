@@ -16,9 +16,12 @@ __global__ void baseline(float *d_input, float *d_output, int N) {
 __global__ void reduce(float *d_input, float *d_output, int N) {
   __shared__ float tmp[threadsPerBlock / warpSize];
 
+  int chunk_size = (N + gridDim.x - 1) / gridDim.x;
+  int start = blockIdx.x * chunk_size;
+  int end = min(start + chunk_size, N);
+
   float val = 0;
-  for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < N;
-       idx += gridDim.x * blockDim.x) {
+  for (int idx = start + threadIdx.x; idx < end; idx += blockDim.x) {
     val += d_input[idx];
   }
 
