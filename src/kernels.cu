@@ -20,9 +20,7 @@ __global__ void smem(float *d_input, float *d_output, int N) {
   if (i >= N)
     return;
 
-  int val = d_input[i];
-
-  __syncthreads();
+  float val = d_input[i];
 
   for (int offset = 16; offset > 0; offset /= 2)
     val += __shfl_down_sync(FULL_MASK, val, offset);
