@@ -36,15 +36,14 @@ int main() {
     h_input[i] = 1.0f;
   }
 
-  float *d_input, *d_temp1, *d_temp2, *d_output;
+  float *d_input, *d_temp, *d_output;
   checkCudaError(cudaMalloc(&d_input, bytes), "d_input allocation");
-  checkCudaError(cudaMalloc(&d_temp1, bytes), "d_temp1 allocation");
-  checkCudaError(cudaMalloc(&d_temp2, bytes), "d_temp2 allocation");
+  checkCudaError(cudaMalloc(&d_temp, bytes), "d_temp allocation");
   checkCudaError(cudaMalloc(&d_output, sizeof(float)), "d_output allocation");
   checkCudaError(cudaMemset(d_output, 0, sizeof(float)), "d_output memset");
 
   float *in = d_input;
-  float *out = d_temp1;
+  float *out = d_temp;
 
   checkCudaError(
       cudaMemcpy(d_input, h_input.data(), bytes, cudaMemcpyHostToDevice),
