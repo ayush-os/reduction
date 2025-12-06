@@ -5,6 +5,7 @@
 #include <vector>
 
 __global__ void baseline(float *d_input, float *d_total_sum, int N);
+__global__ void smem(float *d_input, float *d_total_sum, int N);
 
 void checkCudaError(cudaError_t err, const char *msg) {
   if (err != cudaSuccess) {
@@ -55,7 +56,7 @@ int main() {
   std::cout << "Warming up the GPU and Caches (" << WARMUP_RUNS << " runs)..."
             << std::endl;
   for (int i = 0; i < WARMUP_RUNS; ++i) {
-    baseline<<<numBlocks, threadsPerBlock>>>(d_input, d_output, VECTOR_DIM);
+    smem<<<numBlocks, threadsPerBlock>>>(d_input, d_output, VECTOR_DIM);
   }
   checkCudaError(cudaDeviceSynchronize(), "warm-up device sync");
   checkCudaError(cudaGetLastError(), "warm-up kernel launch");
@@ -68,7 +69,7 @@ int main() {
     checkCudaError(cudaMemset(d_output, 0, sizeof(float)), "d_output reset");
     checkCudaError(cudaEventRecord(start), "cudaEventRecord start");
 
-    baseline<<<numBlocks, threadsPerBlock>>>(d_input, d_output, VECTOR_DIM);
+    smem<<<numBlocks, threadsPerBlock>>>(d_input, d_output, VECTOR_DIM);
 
     checkCudaError(cudaEventRecord(stop), "cudaEventRecord stop");
     checkCudaError(cudaEventSynchronize(stop), "cudaEventSynchronize stop");
