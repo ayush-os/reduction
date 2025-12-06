@@ -13,8 +13,8 @@ __global__ void baseline(float *d_input, float *d_output, int N) {
   atomicAdd(d_output, d_input[i]);
 }
 
-__global__ void smem(float *d_input, float *d_output, int N) {
-  __shared__ int tmp[threadsPerBlock / warpSize];
+__global__ void reduce(float *d_input, float *d_output, int N) {
+  __shared__ float tmp[threadsPerBlock / warpSize];
 
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= N)
@@ -31,9 +31,9 @@ __global__ void smem(float *d_input, float *d_output, int N) {
   __syncthreads();
 
   if (threadIdx.x == 0) {
-    int sum = 0;
+    float sum = 0;
     for (int i = 0; i < (threadsPerBlock / warpSize); i++)
       sum += tmp[i];
-    atomicAdd(d_output, sum);
+    d_output[blockIdx.x] = sum;
   }
 }

@@ -5,7 +5,7 @@
 #include <vector>
 
 __global__ void baseline(float *d_input, float *d_total_sum, int N);
-__global__ void smem(float *d_input, float *d_total_sum, int N);
+__global__ void reduce(float *d_input, float *d_total_sum, int N);
 
 void checkCudaError(cudaError_t err, const char *msg) {
   if (err != cudaSuccess) {
@@ -18,6 +18,7 @@ void checkCudaError(cudaError_t err, const char *msg) {
 int main() {
   const int SHIFT = 24;
   const int VECTOR_DIM = 1 << SHIFT; // 16,777,216 elements
+  int N = VECTOR_DIM;
   const size_t bytes = VECTOR_DIM * sizeof(float);
 
   const int WARMUP_RUNS = 10;
@@ -35,17 +36,21 @@ int main() {
     h_input[i] = 1.0f;
   }
 
-  float *d_input, *d_output;
+  float *d_input, *d_temp1, *d_temp2, *d_output;
   checkCudaError(cudaMalloc(&d_input, bytes), "d_input allocation");
+  checkCudaError(cudaMalloc(&d_temp1, bytes), "d_temp1 allocation");
+  checkCudaError(cudaMalloc(&d_temp2, bytes), "d_temp2 allocation");
   checkCudaError(cudaMalloc(&d_output, sizeof(float)), "d_output allocation");
   checkCudaError(cudaMemset(d_output, 0, sizeof(float)), "d_output memset");
+
+  float *in = d_input;
+  float *out = d_temp1;
 
   checkCudaError(
       cudaMemcpy(d_input, h_input.data(), bytes, cudaMemcpyHostToDevice),
       "input copy H->D");
 
   const int threadsPerBlock = 256;
-  const int numBlocks = (VECTOR_DIM + threadsPerBlock - 1) / threadsPerBlock;
   std::cout << "Grid: " << numBlocks << " blocks, " << threadsPerBlock
             << " threads/block." << std::endl;
 
@@ -56,7 +61,20 @@ int main() {
   std::cout << "Warming up the GPU and Caches (" << WARMUP_RUNS << " runs)..."
             << std::endl;
   for (int i = 0; i < WARMUP_RUNS; ++i) {
-    smem<<<numBlocks, threadsPerBlock>>>(d_input, d_output, VECTOR_DIM);
+    int pass = 0;
+    while (N > threadsPerBlock) {
+      int blocks = (N + threadsPerBlock - 1) / threadsPerBlock;
+      reduce<<<blocks, threadsPerBlock>>>(in, out, N);
+      N = blocks;
+
+      in = (pass % 2 == 0) ? d_temp1 : d_temp2;
+      out = (pass % 2 == 0) ? d_temp2 : d_temp1;
+      pass++;
+    }
+
+    reduce<<<1, threadsPerBlock>>>(in, d_output, N);
+
+    N = 1 << SHIFT;
   }
   checkCudaError(cudaDeviceSynchronize(), "warm-up device sync");
   checkCudaError(cudaGetLastError(), "warm-up kernel launch");
@@ -69,7 +87,20 @@ int main() {
     checkCudaError(cudaMemset(d_output, 0, sizeof(float)), "d_output reset");
     checkCudaError(cudaEventRecord(start), "cudaEventRecord start");
 
-    smem<<<numBlocks, threadsPerBlock>>>(d_input, d_output, VECTOR_DIM);
+    int pass = 0;
+    while (N > threadsPerBlock) {
+      int blocks = (N + threadsPerBlock - 1) / threadsPerBlock;
+      reduce<<<blocks, threadsPerBlock>>>(in, out, N);
+      N = blocks;
+
+      in = (pass % 2 == 0) ? d_temp1 : d_temp2;
+      out = (pass % 2 == 0) ? d_temp2 : d_temp1;
+      pass++;
+    }
+
+    reduce<<<1, threadsPerBlock>>>(in, d_output, N);
+
+    N = 1 << SHIFT;
 
     checkCudaError(cudaEventRecord(stop), "cudaEventRecord stop");
     checkCudaError(cudaEventSynchronize(stop), "cudaEventSynchronize stop");
@@ -91,8 +122,8 @@ int main() {
   std::cout << "\n--- Timing Results ---" << std::endl;
   std::cout << "Total execution time for " << TIMING_RUNS
             << " stable runs: " << total_milliseconds << " ms" << std::endl;
-  std::cout << "**Average kernel execution time:** " << average_milliseconds * 1000
-            << " us" << std::endl;
+  std::cout << "**Average kernel execution time:** "
+            << average_milliseconds * 1000 << " us" << std::endl;
 
   if (std::abs(h_output_val - expected_value) < 1e-5 * expected_value) {
     std::cout << "\nVerification Check: **PASSED**" << std::endl;
