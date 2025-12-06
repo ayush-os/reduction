@@ -51,8 +51,6 @@ int main() {
       "input copy H->D");
 
   const int threadsPerBlock = 256;
-  std::cout << "Grid: " << numBlocks << " blocks, " << threadsPerBlock
-            << " threads/block." << std::endl;
 
   cudaEvent_t start, stop;
   checkCudaError(cudaEventCreate(&start), "cudaEventCreate start");
