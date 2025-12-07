@@ -73,8 +73,8 @@ int main() {
     checkCudaError(cudaMemset(d_output, 0, sizeof(float)), "d_output reset");
     checkCudaError(cudaEventRecord(start), "cudaEventRecord start");
 
-    reduce<<<2048, 256>>>(d_input, d_temp, N);
-    reduce<<<1, 256>>>(d_temp, d_output, 2048);
+    reduce<<<1024, 512>>>(d_input, d_temp, N);
+    reduce<<<1, 256>>>(d_temp, d_output, 1024);
 
     checkCudaError(cudaEventRecord(stop), "cudaEventRecord stop");
     checkCudaError(cudaEventSynchronize(stop), "cudaEventSynchronize stop");
