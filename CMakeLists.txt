@@ -16,7 +16,7 @@ add_executable(reduction
 target_include_directories(reduction PRIVATE ${CUDA_INCLUDE_DIRS})
 
 target_compile_options(reduction PRIVATE
-    $<$<COMPILE_LANGUAGE:CUDA>:-std=c++14>
+    $<$<COMPILE_LANGUAGE:CUDA>:-std=c++17>
     $<$<COMPILE_LANGUAGE:CUDA>:-O3>
     $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>
     $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
