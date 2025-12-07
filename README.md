@@ -41,3 +41,38 @@ now i'm at 99.69us
 3072 blocks × 512 threads ← 81.308 μs
 
 going with 2048 blocks × 512 threads so we're now at 78.83 us
+
+### step 7 vectorized loads float4
+
+59.6931 us
+
+
+### step 8 compare with thrust and CUB
+
+(main) root@C.28568743:/workspace/reduction/build$ ./bin/reduction 
+=== Reduction Benchmark Comparison ===
+N = 16777216 elements (64 MB)
+
+--- Your Optimized Kernel ---
+Average time: 59.6224 μs
+Result: 1.67772e+07 (expected: 1.67772e+07)
+Bandwidth: 1125.56 GB/s
+
+--- CUB DeviceReduce::Sum ---
+Average time: 59.1923 μs
+Result: 1.67772e+07 (expected: 1.67772e+07)
+Bandwidth: 1133.74 GB/s
+
+--- Thrust::reduce ---
+Average time: 86.8957 μs
+Result: 1.67772e+07 (expected: 1.67772e+07)
+Bandwidth: 772.292 GB/s
+
+=== SUMMARY ===
+Your kernel:  59.6224 μs
+CUB:          59.1923 μs (1.00727x vs yours)
+Thrust:       86.8957 μs (0.686138x vs yours)
+(main) root@C.28568743:/workspace/reduction/build$ 
+
+
+holy cow hahahahah
