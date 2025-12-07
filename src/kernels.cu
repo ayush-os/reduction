@@ -17,8 +17,19 @@ __global__ void reduce(float *d_input, float *d_output, int N) {
   __shared__ float tmp[32];
 
   float val = 0;
-  for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < N;
+
+  float4 *d_input4 = reinterpret_cast<float4 *>(d_input);
+  int N4 = N / 4;
+
+  for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < N4;
        idx += gridDim.x * blockDim.x) {
+    float4 vals = d_input4[idx];
+    val += vals.x + vals.y + vals.z + vals.w;
+  }
+
+  int remainder_start = N4 * 4;
+  for (int idx = remainder_start + blockIdx.x * blockDim.x + threadIdx.x;
+       idx < N; idx += gridDim.x * blockDim.x) {
     val += d_input[idx];
   }
 
