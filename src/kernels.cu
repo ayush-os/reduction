@@ -14,7 +14,7 @@ __global__ void baseline(float *d_input, float *d_output, int N) {
 }
 
 __global__ void reduce(float *d_input, float *d_output, int N) {
-  __shared__ float tmp[threadsPerBlock / warpSize];
+  __shared__ float tmp[32];
 
   float val = 0;
   for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < N;
@@ -32,7 +32,7 @@ __global__ void reduce(float *d_input, float *d_output, int N) {
 
   if (threadIdx.x == 0) {
     float sum = 0;
-    for (int i = 0; i < (threadsPerBlock / warpSize); i++)
+    for (int i = 0; i < (blockDim.x / warpSize); i++)
       sum += tmp[i];
     d_output[blockIdx.x] = sum;
   }
