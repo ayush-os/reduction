@@ -1,11 +1,16 @@
-#include <cmath>
 #include <cuda_runtime.h>
 #include <iostream>
 #include <numeric>
 #include <vector>
 
-__global__ void baseline(float *d_input, float *d_total_sum, int N);
-__global__ void reduce(float *d_input, float *d_total_sum, int N);
+// CUB library
+#include <cub/cub.cuh>
+
+// Thrust library
+#include <thrust/device_vector.h>
+#include <thrust/reduce.h>
+
+#define FULL_MASK 0xffffffff
 
 void checkCudaError(cudaError_t err, const char *msg) {
   if (err != cudaSuccess) {
@@ -15,102 +20,216 @@ void checkCudaError(cudaError_t err, const char *msg) {
   }
 }
 
-int main() {
-  const int SHIFT = 24;
-  const int VECTOR_DIM = 1 << SHIFT; // 16,777,216 elements
-  int N = VECTOR_DIM;
-  const size_t bytes = VECTOR_DIM * sizeof(float);
+// Your optimized kernel
+__global__ void yourReduce(float *d_input, float *d_output, int N) {
+  __shared__ float tmp[32];
 
-  const int WARMUP_RUNS = 10;
-  const int TIMING_RUNS = 1000;
+  float val0 = 0, val1 = 0, val2 = 0, val3 = 0;
 
-  std::cout << "--- Vector Reduction Sum Stable Timing Test ---" << std::endl;
-  std::cout << "Vector Dim N: " << VECTOR_DIM << std::endl;
-  std::cout << "Total Array Size: " << VECTOR_DIM << " elements ("
-            << (double)bytes / (1024 * 1024 * 1024) << " GB)" << std::endl;
+  float4 *d_input4 = reinterpret_cast<float4 *>(d_input);
+  int N4 = N / 4;
 
-  std::vector<float> h_input(VECTOR_DIM);
-  float h_output_val = 0.0f;
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  int stride = gridDim.x * blockDim.x;
 
-  for (int i = 0; i < VECTOR_DIM; ++i) {
-    h_input[i] = 1.0f;
+  for (; idx < N4 - 3; idx += stride * 4) {
+    float4 v0 = d_input4[idx];
+    float4 v1 = d_input4[idx + stride];
+    float4 v2 = d_input4[idx + stride * 2];
+    float4 v3 = d_input4[idx + stride * 3];
+
+    val0 += v0.x + v0.y + v0.z + v0.w;
+    val1 += v1.x + v1.y + v1.z + v1.w;
+    val2 += v2.x + v2.y + v2.z + v2.w;
+    val3 += v3.x + v3.y + v3.z + v3.w;
   }
 
-  float *d_input, *d_temp, *d_output;
-  checkCudaError(cudaMalloc(&d_input, bytes), "d_input allocation");
-  checkCudaError(cudaMalloc(&d_temp, 1024 * sizeof(float)),
-                 "d_temp allocation");
-  checkCudaError(cudaMalloc(&d_output, sizeof(float)), "d_output allocation");
-  checkCudaError(cudaMemset(d_output, 0, sizeof(float)), "d_output memset");
+  for (; idx < N4; idx += stride) {
+    float4 v = d_input4[idx];
+    val0 += v.x + v.y + v.z + v.w;
+  }
 
-  float *in = d_input;
-  float *out = d_temp;
+  float val = val0 + val1 + val2 + val3;
+
+  for (int offset = 16; offset > 0; offset /= 2)
+    val += __shfl_down_sync(FULL_MASK, val, offset);
+
+  if (threadIdx.x % 32 == 0)
+    tmp[threadIdx.x / 32] = val;
+
+  __syncthreads();
+
+  if (threadIdx.x == 0) {
+    float sum = 0;
+    for (int i = 0; i < (blockDim.x / 32); i++)
+      sum += tmp[i];
+    d_output[blockIdx.x] = sum;
+  }
+}
+
+int main() {
+  const int N = 1 << 24; // 16,777,216 elements
+  const size_t bytes = N * sizeof(float);
+  const int WARMUP = 10;
+  const int TIMING = 1000;
+
+  std::cout << "=== Reduction Benchmark Comparison ===" << std::endl;
+  std::cout << "N = " << N << " elements (" << bytes / (1024.0 * 1024.0)
+            << " MB)" << std::endl;
+  std::cout << std::endl;
+
+  // Host data
+  std::vector<float> h_input(N, 1.0f);
+  float expected = static_cast<float>(N);
+
+  // Device allocations
+  float *d_input, *d_temp, *d_output;
+  checkCudaError(cudaMalloc(&d_input, bytes), "d_input");
+  checkCudaError(cudaMalloc(&d_temp, 4096 * sizeof(float)), "d_temp");
+  checkCudaError(cudaMalloc(&d_output, sizeof(float)), "d_output");
 
   checkCudaError(
       cudaMemcpy(d_input, h_input.data(), bytes, cudaMemcpyHostToDevice),
-      "input copy H->D");
-
-  const int threadsPerBlock = 256;
+      "memcpy H2D");
 
   cudaEvent_t start, stop;
-  checkCudaError(cudaEventCreate(&start), "cudaEventCreate start");
-  checkCudaError(cudaEventCreate(&stop), "cudaEventCreate stop");
+  checkCudaError(cudaEventCreate(&start), "event create");
+  checkCudaError(cudaEventCreate(&stop), "event create");
 
-  std::cout << "Warming up the GPU and Caches (" << WARMUP_RUNS << " runs)..."
+  // ============ YOUR KERNEL ============
+  std::cout << "--- Your Optimized Kernel ---" << std::endl;
+
+  // Warmup
+  for (int i = 0; i < WARMUP; i++) {
+    cudaMemset(d_output, 0, sizeof(float));
+    yourReduce<<<2048, 512>>>(d_input, d_temp, N);
+    yourReduce<<<1, 256>>>(d_temp, d_output, 2048);
+  }
+  cudaDeviceSynchronize();
+
+  // Timing
+  float total_ms = 0;
+  for (int i = 0; i < TIMING; i++) {
+    cudaMemset(d_output, 0, sizeof(float));
+    cudaEventRecord(start);
+    yourReduce<<<2048, 512>>>(d_input, d_temp, N);
+    yourReduce<<<1, 256>>>(d_temp, d_output, 2048);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    float ms;
+    cudaEventElapsedTime(&ms, start, stop);
+    total_ms += ms;
+  }
+
+  float your_avg_us = (total_ms / TIMING) * 1000;
+  float result;
+  cudaMemcpy(&result, d_output, sizeof(float), cudaMemcpyDeviceToHost);
+
+  std::cout << "Average time: " << your_avg_us << " μs" << std::endl;
+  std::cout << "Result: " << result << " (expected: " << expected << ")"
             << std::endl;
-  for (int i = 0; i < WARMUP_RUNS; ++i) {
-    reduce<<<1024, 256>>>(d_input, d_temp, N);
-    reduce<<<1, 256>>>(d_temp, d_output, 1024);
-  }
-  checkCudaError(cudaDeviceSynchronize(), "warm-up device sync");
-  checkCudaError(cudaGetLastError(), "warm-up kernel launch");
-
-  float total_milliseconds = 0;
-  std::cout << "Starting Stable Timing Loop (" << TIMING_RUNS << " runs)..."
+  std::cout << "Bandwidth: " << (bytes / 1e9) / (your_avg_us / 1e6) << " GB/s"
             << std::endl;
+  std::cout << std::endl;
 
-  for (int i = 0; i < TIMING_RUNS; ++i) {
-    checkCudaError(cudaMemset(d_output, 0, sizeof(float)), "d_output reset");
-    checkCudaError(cudaEventRecord(start), "cudaEventRecord start");
+  // ============ CUB DeviceReduce ============
+  std::cout << "--- CUB DeviceReduce::Sum ---" << std::endl;
 
-    reduce<<<2048, 512>>>(d_input, d_temp, N);
-    reduce<<<1, 256>>>(d_temp, d_output, 2048);
+  void *d_temp_storage = nullptr;
+  size_t temp_storage_bytes = 0;
 
-    checkCudaError(cudaEventRecord(stop), "cudaEventRecord stop");
-    checkCudaError(cudaEventSynchronize(stop), "cudaEventSynchronize stop");
+  // Get required temp storage size
+  cub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, d_input, d_output,
+                         N);
+  checkCudaError(cudaMalloc(&d_temp_storage, temp_storage_bytes),
+                 "CUB temp storage");
 
-    float milliseconds_i = 0;
-    checkCudaError(cudaEventElapsedTime(&milliseconds_i, start, stop),
-                   "cudaEventElapsedTime");
-    total_milliseconds += milliseconds_i;
+  // Warmup
+  for (int i = 0; i < WARMUP; i++) {
+    cudaMemset(d_output, 0, sizeof(float));
+    cub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, d_input,
+                           d_output, N);
+  }
+  cudaDeviceSynchronize();
+
+  // Timing
+  total_ms = 0;
+  for (int i = 0; i < TIMING; i++) {
+    cudaMemset(d_output, 0, sizeof(float));
+    cudaEventRecord(start);
+    cub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, d_input,
+                           d_output, N);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    float ms;
+    cudaEventElapsedTime(&ms, start, stop);
+    total_ms += ms;
   }
 
-  float average_milliseconds = total_milliseconds / TIMING_RUNS;
+  float cub_avg_us = (total_ms / TIMING) * 1000;
+  cudaMemcpy(&result, d_output, sizeof(float), cudaMemcpyDeviceToHost);
 
-  checkCudaError(cudaMemcpy(&h_output_val, d_output, sizeof(float),
-                            cudaMemcpyDeviceToHost),
-                 "output copy D->H");
+  std::cout << "Average time: " << cub_avg_us << " μs" << std::endl;
+  std::cout << "Result: " << result << " (expected: " << expected << ")"
+            << std::endl;
+  std::cout << "Bandwidth: " << (bytes / 1e9) / (cub_avg_us / 1e6) << " GB/s"
+            << std::endl;
+  std::cout << std::endl;
 
-  float expected_value = std::accumulate(h_input.begin(), h_input.end(), 0.0f);
+  // ============ Thrust reduce ============
+  std::cout << "--- Thrust::reduce ---" << std::endl;
 
-  std::cout << "\n--- Timing Results ---" << std::endl;
-  std::cout << "Total execution time for " << TIMING_RUNS
-            << " stable runs: " << total_milliseconds << " ms" << std::endl;
-  std::cout << "**Average kernel execution time:** "
-            << average_milliseconds * 1000 << " us" << std::endl;
+  thrust::device_ptr<float> thrust_input(d_input);
 
-  if (std::abs(h_output_val - expected_value) < 1e-5 * expected_value) {
-    std::cout << "\nVerification Check: **PASSED**" << std::endl;
-  } else {
-    std::cout << "\nVerification Check: **FAILED**" << std::endl;
+  // Warmup
+  for (int i = 0; i < WARMUP; i++) {
+    float thrust_result = thrust::reduce(thrust_input, thrust_input + N, 0.0f,
+                                         thrust::plus<float>());
   }
-  std::cout << "Kernel Result: " << h_output_val
-            << " , Expected Value: " << expected_value << std::endl;
+  cudaDeviceSynchronize();
 
-  checkCudaError(cudaEventDestroy(start), "cudaEventDestroy start");
-  checkCudaError(cudaEventDestroy(stop), "cudaEventDestroy stop");
-  checkCudaError(cudaFree(d_input), "cudaFree d_input");
-  checkCudaError(cudaFree(d_output), "cudaFree d_output");
+  // Timing
+  total_ms = 0;
+  for (int i = 0; i < TIMING; i++) {
+    cudaEventRecord(start);
+    float thrust_result = thrust::reduce(thrust_input, thrust_input + N, 0.0f,
+                                         thrust::plus<float>());
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    float ms;
+    cudaEventElapsedTime(&ms, start, stop);
+    total_ms += ms;
+  }
+
+  float thrust_avg_us = (total_ms / TIMING) * 1000;
+  float thrust_result = thrust::reduce(thrust_input, thrust_input + N, 0.0f,
+                                       thrust::plus<float>());
+
+  std::cout << "Average time: " << thrust_avg_us << " μs" << std::endl;
+  std::cout << "Result: " << thrust_result << " (expected: " << expected << ")"
+            << std::endl;
+  std::cout << "Bandwidth: " << (bytes / 1e9) / (thrust_avg_us / 1e6) << " GB/s"
+            << std::endl;
+  std::cout << std::endl;
+
+  // ============ SUMMARY ============
+  std::cout << "=== SUMMARY ===" << std::endl;
+  std::cout << "Your kernel:  " << your_avg_us << " μs" << std::endl;
+  std::cout << "CUB:          " << cub_avg_us << " μs ("
+            << (your_avg_us / cub_avg_us) << "x vs yours)" << std::endl;
+  std::cout << "Thrust:       " << thrust_avg_us << " μs ("
+            << (your_avg_us / thrust_avg_us) << "x vs yours)" << std::endl;
+
+  // Cleanup
+  cudaFree(d_input);
+  cudaFree(d_temp);
+  cudaFree(d_output);
+  cudaFree(d_temp_storage);
+  cudaEventDestroy(start);
+  cudaEventDestroy(stop);
 
   return 0;
 }
